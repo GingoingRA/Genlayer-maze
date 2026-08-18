@@ -1,0 +1,9 @@
+{
+  "name": "genlayer-maze-run",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GenLayer Maze Run \u2014 first-person 3D maze game with room multiplayer",
+  "dependencies": {
+    "@upstash/redis": "^1.34.3"
+  }
+}
