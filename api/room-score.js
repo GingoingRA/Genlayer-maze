@@ -15,6 +15,7 @@ module.exports = async (req, res) => {
     await kv.hset(`room:${roomCode}:scores`, {
       [id]: JSON.stringify({ id, name, score, elapsed, ts: Date.now() })
     });
+    await kv.expire(`room:${roomCode}:scores`, 60 * 45);
 
     res.status(200).json({ ok: true });
   } catch (err) {

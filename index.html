@@ -163,6 +163,16 @@
   }
   .pill.timer{color:var(--cyan); font-family:var(--font-mono);}
   .pill.timer.low{color:var(--danger); animation:pulse 1s infinite;}
+  .icon-btn{
+    background:var(--bg2); border:1px solid var(--line); border-radius:999px; color:var(--text);
+    width:38px; height:38px; padding:0; font-size:1.05rem; display:flex; align-items:center; justify-content:center;
+  }
+  .icon-btn:hover{border-color:var(--cyan);}
+  .leave-btn{
+    background:transparent; border:1px solid rgba(255,77,106,.4); color:var(--danger);
+    border-radius:999px; padding:8px 16px; font-size:.85rem; font-family:var(--font-display); font-weight:700;
+  }
+  .leave-btn:hover{background:rgba(255,77,106,.12); border-color:var(--danger);}
   @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.45}}
 
   /* ---------- 3D viewport ---------- */
@@ -315,7 +325,7 @@
       <div id="mode-create" style="display:none;">
         <label for="host-name-input">Your name (room host)</label>
         <input type="text" id="host-name-input" maxlength="18" placeholder="e.g. quiz_master" autocomplete="off">
-        <div class="rules">Create a private room for up to <b>300 players</b>. Everyone gets an identical maze layout and a fair 5-minute run. You'll get a room code and link to share — once everyone's in, you start the round, and results land on a shared room leaderboard you can use to pick winners.</div>
+        <div class="rules">Create a private room for up to <b>300 players</b>. Everyone gets an identical maze layout and races the same 4-minute countdown, which starts the moment you hit start for everyone at once — join partway through and you'll just have less time left. You'll get a room code and link to share, and results land on a shared room leaderboard you can use to pick winners.</div>
         <button class="btn-primary" id="create-room-btn">Create room</button>
       </div>
 
@@ -397,7 +407,9 @@
     <div class="hud-row">
       <div class="pill"><span>Runner</span>&nbsp;<span id="hud-name">—</span></div>
       <div class="pill coins">🪙 <span id="hud-coins">0</span>/100</div>
-      <div class="pill timer" id="hud-timer-pill">⏱ <span id="hud-timer">5:00</span></div>
+      <div class="pill timer" id="hud-timer-pill">⏱ <span id="hud-timer">4:00</span></div>
+      <button type="button" class="icon-btn" id="mute-btn" title="Toggle music" aria-label="Toggle music">🔊</button>
+      <button type="button" class="leave-btn" id="leave-game-btn">Leave</button>
     </div>
 
     <div class="viewport-wrap" id="viewport-wrap">
@@ -515,7 +527,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
   const NUM_WALL_FACTS = 18;
   const NUM_BONUS_MARKERS = 12;
   const BONUS_COINS = 5;
-  const GAME_SECONDS = 5 * 60;
+  const GAME_SECONDS = 4 * 60;
   const GRAVITY = 20;
   const JUMP_VELOCITY = 7.6;
   const LB_KEY = 'genlayer-maze-3d-leaderboard-v2';
@@ -1216,23 +1228,105 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     renderer.render(scene, camera);
   }
 
+  // ================= Music (procedurally generated, no external audio files) =================
+  // A short synthesized chiptune loop built from oscillators \u2014 fits the
+  // pixel-art theme and sidesteps any music licensing question entirely,
+  // since nothing here is a recording of an existing track.
+  let audioCtx = null, masterGain = null, musicMuted = false, musicStarted = false;
+  let nextNoteTime = 0, noteStep = 0, schedulerTimer = null;
+  const MUSIC_BPM = 112;
+  const STEP_SEC = 60/MUSIC_BPM/2; // eighth notes
+  // C major-ish upbeat progression: C - Am - F - G, arpeggiated
+  const BASS_NOTES = [130.81,130.81,220.00,220.00, 174.61,174.61,196.00,196.00,
+                       130.81,130.81,220.00,220.00, 174.61,174.61,196.00,196.00];
+  const LEAD_NOTES  = [523.25,659.25,783.99,659.25, 440.00,523.25,659.25,523.25,
+                        349.23,440.00,523.25,440.00, 392.00,493.88,587.33,493.88];
+
+  function initAudioOnGesture(){
+    if(audioCtx) { if(audioCtx.state === 'suspended') audioCtx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    try{
+      audioCtx = new AC();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = musicMuted ? 0 : 0.16;
+      masterGain.connect(audioCtx.destination);
+    }catch(err){ audioCtx = null; }
+  }
+
+  function scheduleNote(freq, time, duration, type, peakGain){
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0, time);
+    g.gain.linearRampToValueAtTime(peakGain, time+0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, time+duration);
+    osc.connect(g); g.connect(masterGain);
+    osc.start(time);
+    osc.stop(time+duration+0.02);
+  }
+
+  function musicScheduler(){
+    while(nextNoteTime < audioCtx.currentTime + 0.15){
+      const i = noteStep % BASS_NOTES.length;
+      scheduleNote(BASS_NOTES[i], nextNoteTime, STEP_SEC*1.8, 'triangle', 0.5);
+      scheduleNote(LEAD_NOTES[i], nextNoteTime, STEP_SEC*0.85, 'square', 0.16);
+      nextNoteTime += STEP_SEC;
+      noteStep++;
+    }
+  }
+
+  function startMusic(){
+    if(musicMuted) return;
+    if(!audioCtx) initAudioOnGesture();
+    if(!audioCtx) return; // Web Audio unavailable in this browser
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    if(musicStarted) return;
+    musicStarted = true;
+    noteStep = 0;
+    nextNoteTime = audioCtx.currentTime + 0.1;
+    clearInterval(schedulerTimer);
+    schedulerTimer = setInterval(musicScheduler, 100);
+  }
+
+  function setMusicMuted(muted){
+    musicMuted = muted;
+    if(masterGain) masterGain.gain.value = muted ? 0 : 0.16;
+    if(!muted && gameActive){ startMusic(); if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); }
+    const btn = document.getElementById('mute-btn');
+    if(btn) btn.textContent = muted ? '\ud83d\udd07' : '\ud83d\udd0a';
+  }
+
+  const muteBtn = document.getElementById('mute-btn');
+  if(muteBtn) muteBtn.addEventListener('click', ()=> setMusicMuted(!musicMuted));
+
   // ================= Timer =================
+  // The timer counts down to an absolute wall-clock timestamp (roundEndAt)
+  // rather than just decrementing a local counter. For solo play that
+  // timestamp is simply "now + GAME_SECONDS". For room play it's anchored to
+  // the host's start time, so every player's round ends at the exact same
+  // moment no matter when they personally joined or loaded into the maze.
+  let roundEndAt = 0;
+
   function formatTime(s){
     const m = Math.floor(s/60), sec = s%60;
     return m+':'+(sec<10?'0':'')+sec;
   }
-  function startTimer(){
-    timeLeft = GAME_SECONDS;
+  function updateTimerDisplay(){
+    timeLeft = Math.max(0, Math.round((roundEndAt - Date.now())/1000));
     hudTimer.textContent = formatTime(timeLeft);
-    hudTimerPill.classList.remove('low');
+    hudTimerPill.classList.toggle('low', timeLeft<=30);
+    if(timeLeft<=0){ clearInterval(timerId); endGame(false); }
+  }
+  function startTimer(endAt){
+    roundEndAt = endAt;
+    updateTimerDisplay();
     clearInterval(timerId);
     timerId = setInterval(()=>{
       if(!gameActive || paused) return;
-      timeLeft--;
-      hudTimer.textContent = formatTime(timeLeft);
-      if(timeLeft<=30) hudTimerPill.classList.add('low');
-      if(timeLeft<=0){ clearInterval(timerId); endGame(false); }
-    }, 1000);
+      updateTimerDisplay();
+    }, 500);
   }
 
   // ================= Storage abstraction (shared KV with local fallback) =================
@@ -1398,7 +1492,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     } else {
       try{ const room = await kvRead(ROOM_PREFIX+code, true); players = room ? room.players : []; }catch(err){ players = []; }
       try{ scores = (await kvRead(ROOM_PREFIX+code+':scores', true)) || []; }catch(err){ scores = []; }
-      // self-heal: everyone's 5-minute timer ends around the same moment, so
+      // self-heal: everyone's clock ends around the same moment in room mode, so
       // score submissions cluster tightly \u2014 if a straggler write dropped ours,
       // re-add it here rather than leaving the player invisible on the board.
       if(myScoreEntry && !scores.some(s=>s.id===myScoreEntry.id)){
@@ -1433,8 +1527,9 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
 
   // ================= Solo / room game flow =================
   let roomSeed = null;
+  let runStartedAt = 0;
 
-  function beginRun(seed){
+  function beginRun(seed, endAt){
     coinsCollected = 0;
     hudCoins.textContent = 0;
     factText.textContent = "Get close to a wall plaque to read it here \u2014 or click Mochi's face for a bonus fact and +5 coins.";
@@ -1474,8 +1569,10 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     }
 
     requestAnimationFrame(()=> requestAnimationFrame(resizeRenderer));
-    startTimer();
+    runStartedAt = Date.now();
+    startTimer(endAt || (Date.now() + GAME_SECONDS*1000));
     clock.start();
+    startMusic();
   }
 
   function startGame(){
@@ -1484,26 +1581,31 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     if(username.length>18) username = username.slice(0,18);
     hudName.textContent = username;
     roomMode = null; roomCode = null;
+    initAudioOnGesture();
     beginRun(null);
   }
 
-  function beginRoomRound(){
+  function beginRoomRound(endAt){
     hudName.textContent = username;
-    beginRun(roomSeed);
+    beginRun(roomSeed, endAt);
   }
 
-  async function endGame(won){
+  async function endGame(won, reason){
     if(!gameActive) return;
     gameActive = false;
     paused = true;
     clearInterval(timerId);
     if(document.pointerLockElement === gameCanvas) document.exitPointerLock();
-    const elapsed = GAME_SECONDS - timeLeft;
+    const elapsed = Math.max(0, Math.round((Date.now()-runStartedAt)/1000));
 
     resultBig.textContent = coinsCollected+'/100';
-    resultSub.textContent = won
-      ? `All coins collected with ${formatTime(timeLeft)} left on the clock!`
-      : `Time's up \u2014 nice run.`;
+    if(won){
+      resultSub.textContent = `All coins collected with ${formatTime(timeLeft)} left on the clock!`;
+    } else if(reason === 'left'){
+      resultSub.textContent = `You left the maze early \u2014 nice run.`;
+    } else {
+      resultSub.textContent = `Time's up \u2014 nice run.`;
+    }
 
     showScreen('end');
     if(roomMode){
@@ -1548,11 +1650,11 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
       const res = await fetch(`/api/room-state?code=${encodeURIComponent(code)}`);
       if(!res.ok) return null;
       const data = await res.json();
-      return { status: data.meta.status, mazeSeed: data.meta.mazeSeed, players: data.players, maxPlayers: data.meta.maxPlayers };
+      return { status: data.meta.status, mazeSeed: data.meta.mazeSeed, startedAt: data.meta.startedAt, players: data.players, maxPlayers: data.meta.maxPlayers };
     }
     const room = await kvRead(ROOM_PREFIX+code, true);
     if(!room) return null;
-    return { status: room.status, mazeSeed: room.mazeSeed, players: room.players, maxPlayers: room.maxPlayers };
+    return { status: room.status, mazeSeed: room.mazeSeed, startedAt: room.startedAt, players: room.players, maxPlayers: room.maxPlayers };
   }
 
   async function ensureSelfPresent(code){
@@ -1596,8 +1698,14 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
         renderRoomPlayers(room.players, false);
         if(room.status === 'playing'){
           clearInterval(roomPollTimer);
+          const endAt = room.startedAt + GAME_SECONDS*1000;
+          if(Date.now() >= endAt){
+            showToast("This room's round already ended");
+            showScreen('entry');
+            return;
+          }
           roomSeed = room.mazeSeed;
-          beginRoomRound();
+          beginRoomRound(endAt);
         }
       }catch(err){ /* transient read error, retry next tick */ }
     }, 2200);
@@ -1608,6 +1716,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     const hostName = hostNameInput.value.trim();
     if(!hostName){ hostNameInput.focus(); showToast('Enter your name first'); return; }
     username = hostName.slice(0,18);
+    initAudioOnGesture();
 
     const useBackend = await probeBackend();
     let code = null, room = null;
@@ -1669,9 +1778,10 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     joinBtn.disabled = true;
     const originalBtnText = joinBtn.textContent;
     joinBtn.textContent = 'Joining\u2026';
+    initAudioOnGesture();
 
     const useBackend = await probeBackend();
-    let finalPlayers = null;
+    let finalPlayers = null, roomStatus = 'waiting', roomStartedAt = null, mazeSeed = null;
 
     if(useBackend){
       try{
@@ -1682,6 +1792,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
         const data = await res.json();
         if(!res.ok) throw new Error(data.error || "Couldn't join \u2014 try again.");
         myPlayerId = data.id;
+        roomStatus = data.meta.status; roomStartedAt = data.meta.startedAt; mazeSeed = data.meta.mazeSeed;
         const stateRes = await fetch(`/api/room-state?code=${encodeURIComponent(code)}`);
         const state = await stateRes.json();
         finalPlayers = state.players || [{id: myPlayerId, name: username, ts: Date.now()}];
@@ -1694,14 +1805,12 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
       let precheck;
       try{ precheck = await kvRead(ROOM_PREFIX+code, true); }catch(err){ precheck = null; }
       if(!precheck){ joinBtn.disabled=false; joinBtn.textContent=originalBtnText; showToast('Room not found \u2014 check the code'); return; }
-      if(precheck.status !== 'waiting'){ joinBtn.disabled=false; joinBtn.textContent=originalBtnText; showToast('This room already started'); return; }
 
       myPlayerId = genPlayerId();
       try{
         const finalRoom = await kvReadModifyWrite(ROOM_PREFIX+code, true,
           (current)=>{
             if(!current) throw new Error('Room not found');
-            if(current.status !== 'waiting') throw new Error('Room already started');
             if(current.players.some(p=>p.id===myPlayerId)) return current;
             if(current.players.length >= current.maxPlayers) throw new Error('Room is full');
             const next = {...current, players: current.players.concat([{id:myPlayerId, name:username, ts:Date.now()}])};
@@ -1709,6 +1818,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
           }
         );
         finalPlayers = finalRoom.players;
+        roomStatus = finalRoom.status; roomStartedAt = finalRoom.startedAt; mazeSeed = finalRoom.mazeSeed;
       }catch(err){
         joinBtn.disabled = false; joinBtn.textContent = originalBtnText;
         showToast(err && err.message ? err.message : "Couldn't join \u2014 try again.");
@@ -1718,8 +1828,20 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
 
     joinBtn.disabled = false;
     joinBtn.textContent = originalBtnText;
-
     roomMode = 'guest'; roomCode = code;
+
+    if(roomStatus === 'playing'){
+      const endAt = roomStartedAt + GAME_SECONDS*1000;
+      if(Date.now() >= endAt){
+        showToast("This room's round already ended");
+        showScreen('entry');
+        return;
+      }
+      roomSeed = mazeSeed;
+      beginRoomRound(endAt);
+      return;
+    }
+
     document.getElementById('room-wait-code').textContent = code;
     renderRoomPlayers(finalPlayers, false);
     showScreen('roomWait');
@@ -1730,6 +1852,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
   document.getElementById('join-room-btn').addEventListener('click', joinRoom);
 
   document.getElementById('room-start-btn').addEventListener('click', async ()=>{
+    initAudioOnGesture();
     try{
       if(backendAvailable){
         const res = await fetch('/api/room-start', {
@@ -1740,7 +1863,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
         if(!res.ok) throw new Error(data.error || 'Could not start the round');
         clearInterval(roomPollTimer);
         roomSeed = data.meta.mazeSeed;
-        beginRoomRound();
+        beginRoomRound(data.meta.startedAt + GAME_SECONDS*1000);
       } else {
         const room = await kvRead(ROOM_PREFIX+roomCode, true);
         if(!room) return;
@@ -1748,7 +1871,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
         await kvWrite(ROOM_PREFIX+roomCode, room, true);
         clearInterval(roomPollTimer);
         roomSeed = room.mazeSeed;
-        beginRoomRound();
+        beginRoomRound(room.startedAt + GAME_SECONDS*1000);
       }
     }catch(err){ showToast(err.message || 'Could not start the round'); }
   });
@@ -1778,7 +1901,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     {icon:'🦘', title:'Jump with Space', body:'Press Space (or tap the JUMP button on mobile) to hop. Some coins float above the floor \u2014 you need a good jump to reach them.'},
     {icon:'🐱', title:'Click Mochi for a bonus', body:"Spot Mochi's floating face in the maze and click or tap it \u2014 you'll get a fact about GenLayer and a free +5 coins."},
     {icon:'🧱', title:'Read the walls', body:'Plaques posted around the maze share facts about GenLayer\u2019s tech, consensus, and AI validators as you pass by.'},
-    {icon:'⏱️', title:'Beat the clock', body:"This maze is huge and unforgiving \u2014 5 minutes isn't enough to see it all. Even 80+ coins is a great run. Your score joins the leaderboard when time's up."}
+    {icon:'⏱️', title:'Beat the clock', body:"This maze is huge and unforgiving \u2014 4 minutes isn't enough to see it all. Even 80+ coins is a great run. Your score joins the leaderboard when time's up. In a room, everyone's clock is synced to the host's start \u2014 you can leave anytime with the Leave button."}
   ];
   const wtOverlay = document.getElementById('walkthrough-overlay');
   const wtOpenBtn = document.getElementById('walkthrough-open-btn');
@@ -1826,6 +1949,17 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
 
   // ================= Init =================
 
+  function stopMusic(){
+    clearInterval(schedulerTimer);
+    musicStarted = false;
+  }
+
+  const leaveGameBtn = document.getElementById('leave-game-btn');
+  if(leaveGameBtn) leaveGameBtn.addEventListener('click', ()=>{
+    if(!gameActive) return;
+    endGame(false, 'left');
+  });
+
   startBtn.addEventListener('click', startGame);
   usernameInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') startGame(); });
   playAgainBtn.addEventListener('click', ()=>{
@@ -1835,6 +1969,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
   });
   changeNameBtn.addEventListener('click', ()=>{
     clearInterval(roomPollTimer); clearInterval(roomScorePollTimer); roomMode=null; roomCode=null;
+    stopMusic();
     showScreen('entry');
   });
 

@@ -15,7 +15,7 @@ module.exports = async (req, res) => {
 
     meta.status = 'playing';
     meta.startedAt = Date.now();
-    await kv.set(`room:${roomCode}:meta`, meta, { ex: 60 * 60 * 6 });
+    await kv.set(`room:${roomCode}:meta`, meta, { ex: 60 * 45 });
 
     res.status(200).json({ meta });
   } catch (err) {

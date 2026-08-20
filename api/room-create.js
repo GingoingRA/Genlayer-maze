@@ -30,9 +30,9 @@ module.exports = async (req, res) => {
       maxPlayers: 300, mazeSeed: seed, createdAt: Date.now()
     };
 
-    await kv.set(`room:${code}:meta`, meta, { ex: 60 * 60 * 6 }); // auto-expire after 6h
+    await kv.set(`room:${code}:meta`, meta, { ex: 60 * 45 }); // auto-expire ~45 min after creation \u2014 the round is only 4 min, this just leaves a short buffer to view results
     await kv.hset(`room:${code}:players`, { [hostId]: JSON.stringify({ id: hostId, name: cleanName, ts: Date.now() }) });
-    await kv.expire(`room:${code}:players`, 60 * 60 * 6);
+    await kv.expire(`room:${code}:players`, 60 * 45);
 
     res.status(200).json({ code, hostId, meta });
   } catch (err) {
