@@ -228,17 +228,25 @@
   .fact-box .fact-label{font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; color:var(--cyan); margin-bottom:4px; font-weight:600;}
   .fact-box p{margin:0; font-size:.87rem; line-height:1.5; color:var(--text);}
 
-  .touch-pad{flex:0 0 auto; display:none; flex-direction:column; align-items:center; gap:8px;}
+  .touch-pad{
+    position:absolute; left:10px; right:10px; bottom:calc(10px + env(safe-area-inset-bottom, 0px));
+    z-index:8; display:none; justify-content:space-between; align-items:flex-end;
+    pointer-events:none;
+  }
   .touch-pad.show{display:flex;}
-  .dpad{display:grid; grid-template-columns:50px 50px 50px; grid-template-rows:50px 50px 50px; gap:6px; user-select:none;}
-  .dpad button{padding:0; display:flex; align-items:center; justify-content:center; background:var(--bg2); border:1px solid var(--line); color:var(--text); font-size:1.15rem; border-radius:6px;}
-  .dpad button:hover{border-color:var(--purple);}
+  .dpad{display:grid; grid-template-columns:52px 52px 52px; grid-template-rows:52px 52px 52px; gap:6px; user-select:none; pointer-events:auto;}
+  .dpad button{padding:0; display:flex; align-items:center; justify-content:center; background:rgba(28,15,10,.72); border:1px solid rgba(255,243,230,.25); color:var(--text); font-size:1.2rem; border-radius:8px; backdrop-filter:blur(2px);}
+  .dpad button:active{background:rgba(255,122,69,.35); border-color:var(--purple);}
   .dpad .up{grid-column:2; grid-row:1;}
   .dpad .left{grid-column:1; grid-row:2;}
   .dpad .down{grid-column:2; grid-row:2;}
   .dpad .right{grid-column:3; grid-row:2;}
-  .jump-btn{width:158px; padding:10px; background:linear-gradient(120deg, var(--gold), var(--purple)); color:#241004; font-size:.85rem;}
-  .touch-pad .hint-txt{font-size:.7rem; color:var(--textdim); text-align:center;}
+  .jump-btn{
+    width:72px; height:72px; border-radius:50%; padding:0; pointer-events:auto;
+    background:linear-gradient(120deg, var(--gold), var(--purple)); color:#241004; font-size:.72rem; line-height:1.2;
+    box-shadow:0 4px 14px rgba(0,0,0,.4); font-weight:800;
+  }
+  .jump-btn:active{transform:scale(.94);}
   .desktop-hint{font-size:.72rem; color:var(--textdim); margin-top:8px; text-align:center;}
 
   /* ---------- End / leaderboard ---------- */
@@ -283,9 +291,16 @@
   .waiting-pulse{display:flex; align-items:center; gap:8px; color:var(--textdim); font-size:.85rem; margin:14px 0;}
   .waiting-pulse .dot{width:8px; height:8px; border-radius:50%; background:var(--gold); animation:pulse 1.2s infinite;}
 
+  body.in-game .brand, body.in-game .tagline{display:none;}
+  body.in-game{padding-top:14px;}
+
   @media (max-width:480px){
     .card{padding:24px 18px;}
     .below-viewport{flex-direction:column;}
+    body{padding-left:8px; padding-right:8px; padding-bottom:24px;}
+    body.in-game .viewport-wrap{height:min(78vh, 620px);}
+    .hud-row{margin-bottom:8px; gap:6px;}
+    .pill{padding:6px 10px; font-size:.78rem;}
   }
 </style>
 </head>
@@ -418,11 +433,20 @@
         <div class="crosshair" id="crosshair"></div>
         <div class="compass-pill">Facing <span id="hud-compass">north</span></div>
         <div class="jump-hint" id="jump-hint">SPACE to jump</div>
-        <div class="touch-tip" id="touch-tip">Drag to look around</div>
+        <div class="touch-tip" id="touch-tip">Drag to look · tap Mochi to click her</div>
       </div>
       <div class="lock-overlay" id="lock-overlay">
         <div class="lo-title" id="lo-title">Click to look around</div>
         <div class="lo-sub" id="lo-sub">Your mouse will steer the camera. Press Esc anytime to pause and get your cursor back.</div>
+      </div>
+      <div class="touch-pad" id="touch-pad">
+        <div class="dpad">
+          <button class="up" data-dir="forward">▲</button>
+          <button class="left" data-dir="left">◀</button>
+          <button class="down" data-dir="back">▼</button>
+          <button class="right" data-dir="right">▶</button>
+        </div>
+        <button type="button" class="jump-btn" id="touch-jump-btn">⤒<br>JUMP</button>
       </div>
     </div>
 
@@ -433,16 +457,6 @@
           <div class="fact-label">Mochi says</div>
           <p id="fact-text">Get close to a wall plaque to read it here — or click Mochi's face for a bonus fact and +5 coins.</p>
         </div>
-      </div>
-      <div class="touch-pad" id="touch-pad">
-        <div class="dpad">
-          <button class="up" data-dir="forward">▲</button>
-          <button class="left" data-dir="left">◀</button>
-          <button class="down" data-dir="back">▼</button>
-          <button class="right" data-dir="right">▶</button>
-        </div>
-        <button type="button" class="jump-btn" id="touch-jump-btn">⤒ JUMP</button>
-        <div class="hint-txt">Drag anywhere on the maze to look · tap Mochi to click her</div>
       </div>
       <div class="desktop-hint" id="desktop-hint" style="display:none; width:100%;">WASD / arrows to move · Space to jump · mouse to look · click Mochi for bonus · Esc to pause</div>
     </div>
@@ -625,6 +639,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
   function showScreen(name){
     Object.values(screens).forEach(s=>s.classList.remove('active'));
     screens[name].classList.add('active');
+    document.body.classList.toggle('in-game', name === 'game');
   }
   function showToast(msg){
     toast.textContent = msg;
@@ -1553,6 +1568,7 @@ const LOGO_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADwCAYAAAA+
     desktopHint.style.display = isTouch ? 'none' : 'block';
     touchTip.style.display = isTouch ? 'block' : 'none';
     touchTip.classList.remove('fade');
+    document.getElementById('jump-hint').style.display = isTouch ? 'none' : 'block';
 
     showScreen('game');
     gameActive = true;
